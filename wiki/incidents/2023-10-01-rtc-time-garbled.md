@@ -1,0 +1,7 @@
+# RTC Time Stuck at Garbled Values
+
+A time-keeping fault where Watchy is stuck displaying an impossible time — `45:85 2165/25/45` — that survives NTP sync, a manual set, and a firmware reflash, from [GitHub issue #239](https://github.com/sqfmi/Watchy/issues/239) (open, 8 comments). The minute (85) and month (25) are out of range, which is the signature of corrupted RTC registers rather than a display or network problem.
+
+Because the corruption persisted even after `syncNTP()` wrote a valid time and after `setTime()` wrote the RTC, the likely fault sits in the RTC write/read path or the [RTC](../components/rtc.md) hardware itself, not in the code path that draws the clock. The wiki's RTC page documents the two data paths involved: the external DS3231 or PCF8563 over I2C on V1/V2, or the on-SoC `Watchy32KRTC` (which uses `settimeofday` on the ESP32-S3 system clock) on V3. A stale or out-of-range value written to a chip register, or a broken chip, would produce exactly this "stuck garbage" where the freshly written time never takes hold.
+
+The issue was still **open** as of capture (2026-08) with no confirmed resolution in the thread. For triage, an engineer should determine which RTC path is active (`getBoardRevision()`), attempt a `config()` write and re-read to see whether registers accept a valid time, and if not, treat the RTC clock source as the failing component. This is the canonical "time won't reset" pattern and should be cross-referenced in any future RTC investigation.

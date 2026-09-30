@@ -1,0 +1,10 @@
+# BLE OTA Firmware Update
+
+Push a new firmware image to the watch **wirelessly over Bluetooth Low Energy**, without a serial cable. This replaces the classic USB-flash flow in [Flashing via Serial](../runbooks/flashing-serial.md) when you are near the device or it's out of reach.
+
+1. **Prepare the image.** Build the desired firmware in the Arduino toolchain (the `*.ino.esp32.bin` / `*.bin` artifacts in `examples/WatchFaces/` are ready images) and have a BLE-capable phone/computer with a generic BLE OTA client or `nRF Connect`-style tool.
+2. **Stand up the OTA server.** On the watch, enter the firmware-update menu path so it broadcasts: `updateFWBegin()` (`Watchy.cpp:999`, reachable from the menu) creates a `BLE` server advertising **"Watchy BLE OTA"** and draws instructions to the [Display](../components/display.md). Keep USB powered if tethered so the radio/boot has enough current.
+3. **Connect and stream.** Connect the BLE client to the "Watchy BLE OTA" peripheral. The client writes the firmware to the OTA characteristic; `otaCallback::onWrite` in `src/BLE.cpp:40` begins an `esp_ota_begin`, streams the bytes with `esp_ota_write`, and when a packet shorter than `FULL_PACKET` (512) arrives, finalizes with `esp_ota_end` and calls `esp_ota_set_boot_partition` to mark the new image active. It notifies the client on each packet with a 5-byte ack.
+4. **Reboot into the new image.** On a successful transfer the firmware triggers an `esp_restart()`; the bootloader boots the newly written OTA partition. The BLE service structure is covered in [BLE OTA](../components/ble-ota.md).
+
+Caveats: the current `showUpdateFW`/`updateFWBegin` menu wiring in `Watchy.cpp` is largely commented out (see the `/* case 5: showUpdateFW(); */` region and the `FW_UPDATE_STATE` handling), so in this checkout the OTA entry is not reachable via the ordinary menu — you may need to call `updateFWBegin()` directly or restore those call sites. Watch `updateStatus()`/`howManyBytes()` on-screen: status 0 connected, 1 updating, 2 ready, 4 disconnected. If flashes fail, fall back to [serial flashing](../runbooks/flashing-serial.md).

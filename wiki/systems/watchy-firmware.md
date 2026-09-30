@@ -1,0 +1,9 @@
+# Watchy Firmware
+
+Watchy is an open-source ESP32-based e-paper watch published by SQFMI as an Arduino library (v1.4.15 per `library.properties`, `WATCHY_LIB_VER` "1.4.14" in `src/config.h`). The firmware is a **deep-sleep state machine**: every wakeup reason drives a branch in `Watchy::init()` (`Watchy.cpp:27`) that either redraws the clock or handles input, then unconditionally calls `Watchy::deepSleep()` (`Watchy.cpp:98`) to go back to sleep. The watch has no idle loop.
+
+Two hardware generations compile from the same source, selected by the board macro `ARDUINO_ESP32S3_DEV` (V3, ESP32-S3) vs. the older `ARDUINO_WATCHY_V10`/`V15`/`V20` targets (classic ESP32). The divergences are systemic rather than cosmetic: the V3 uses the on-chip [Watchy32KRTC](../components/rtc.md) and different wake plumbing, while V1/V1.5/V2 carry an external RTC chip over I2C. `getBoardRevision()` (`Watchy.cpp:769`) probes the chip model and I2C bus at runtime and returns 10/15/20/30 to identify the revision.
+
+The heart of the runtime is the [deep sleep & wake model](../concepts/deep-sleep-wake.md): `esp_deep_sleep_start()` is reached at the end of every `init()` pass, and wake sources are configured in `deepSleep()` before sleeping. All interactive state — the current [GUI state](../concepts/gui-state-machine.md), menu index, and various flags — lives in [RTC_DATA_ATTR](../concepts/rtc-data-attr.md) memory so it survives sleep.
+
+Rendering funnels through the [Display](../components/display.md) component, which wraps the GxEPD2 driver for partial-refresh support on [watchfaces](../concepts/watchfaces.md). The firmware's peripherals — [BLE OTA](../components/ble-ota.md), [BMA423 accelerometer](../components/bma423-accelerometer.md), and [WiFi & NTP](../components/wifi-ntp.md) — are each gated behind specific menu actions to keep radio and sensor power use minimal.

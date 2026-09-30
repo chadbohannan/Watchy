@@ -2,7 +2,7 @@
 #define SETTINGS_H
 
 //Weather Settings
-#define CITY_ID "5128581" //New York City https://openweathermap.org/current#cityid
+#define CITY_ID "5392171" //San Jose, CA https://openweathermap.org/current#cityid
 
 //You can also use LAT,LON for your location instead of CITY_ID, but not both
 //#define LAT "40.7127" //New York City, Looked up on https://www.latlong.net/
@@ -15,7 +15,7 @@
 #endif
 
 #define OPENWEATHERMAP_APIKEY "f058fe1cad2afe8e2ddc5d063a64cecb" //use your own API key :)
-#define TEMP_UNIT "metric" //metric = Celsius , imperial = Fahrenheit
+#define TEMP_UNIT "imperial" //metric = Celsius , imperial = Fahrenheit
 #define TEMP_LANG "en"
 #define WEATHER_UPDATE_INTERVAL 30 //must be greater than 5, measured in minutes
 //NTP Settings

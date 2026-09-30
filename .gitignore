@@ -1,3 +1,9 @@
+# Code wiki — machine-local repo paths (see wiki/CLAUDE.md)
+repos.txt
+
+# Local default WiFi credentials (see src/wifi_secrets.h.example)
+src/wifi_secrets.h
+
 app/bin/
 app/pde.jar
 build/macosx/work/

@@ -1,5 +1,11 @@
 #include "Watchy.h"
 
+// Optional, gitignored: defines WATCHY_WIFI_SSID / WATCHY_WIFI_PASS to flash
+// default WiFi credentials. See wifi_secrets.h.example.
+#if __has_include("wifi_secrets.h")
+#include "wifi_secrets.h"
+#endif
+
 #ifdef ARDUINO_ESP32S3_DEV
   Watchy32KRTC Watchy::RTC;
   #define ACTIVE_LOW 0
@@ -956,9 +962,14 @@ void Watchy::_configModeCallback(WiFiManager *myWiFiManager) {
 }
 
 bool Watchy::connectWiFi() {
+#if defined(WATCHY_WIFI_SSID) && defined(WATCHY_WIFI_PASS)
+  // default credentials from the gitignored src/wifi_secrets.h
+  if (WL_CONNECT_FAILED == WiFi.begin(WATCHY_WIFI_SSID, WATCHY_WIFI_PASS)) {
+#else
   if (WL_CONNECT_FAILED ==
       WiFi.begin()) { // WiFi not setup, you can also use hard coded credentials
                       // with WiFi.begin(SSID,PASS);
+#endif
     WIFI_CONFIGURED = false;
   } else {
     if (WL_CONNECTED ==
