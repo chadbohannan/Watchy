@@ -39,3 +39,4 @@ The structured routing layer for the wiki. Each entry links to a page with a one
 ## Syntheses
 
 - [Power Budget Analysis](syntheses/power-budget.md) — how deep sleep, partial refresh, and radio-off policy control battery life
+- [Set Time + NTP Integration Plan](syntheses/set-time-ntp-integration-plan.md) — Set Time list view with Use NTP checkbox, Sync, and a DST-aware timezone picker (four seasonal city tables); implemented, hardware-untested

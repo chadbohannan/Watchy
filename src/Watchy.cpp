@@ -24,6 +24,9 @@ RTC_DATA_ATTR bool BLE_CONFIGURED;
 RTC_DATA_ATTR weatherData currentWeather;
 RTC_DATA_ATTR int weatherIntervalCounter = -1;
 RTC_DATA_ATTR long gmtOffset = 0;
+RTC_DATA_ATTR int8_t tzCitySel = -1; // city picked in Set Time, -1 = none
+RTC_DATA_ATTR bool tzDstOn = false;  // that city's DST rule applied to the RTC
+RTC_DATA_ATTR bool useNTP = false;
 RTC_DATA_ATTR bool alreadyInMenu         = true;
 RTC_DATA_ATTR bool USB_PLUGGED_IN = false;
 RTC_DATA_ATTR tmElements_t bootTime;
@@ -49,6 +52,7 @@ void Watchy::init(String datetime) {
   case ESP_SLEEP_WAKEUP_EXT0: // RTC Alarm
   #endif
     RTC.read(currentTime);
+    _dstTick();
     switch (guiState) {
     case WATCHFACE_STATE:
       showWatchFace(true); // partial updates on tick
@@ -91,6 +95,9 @@ void Watchy::init(String datetime) {
     USB_PLUGGED_IN = (digitalRead(USB_DET_PIN) == 1);
     #endif    
     gmtOffset = settings.gmtOffset;
+    tzCitySel = -1;
+    tzDstOn   = false;
+    useNTP    = false;
     RTC.read(currentTime);
     RTC.read(bootTime);
     showWatchFace(false); // full update on reset
@@ -166,9 +173,6 @@ void Watchy::handleButtonPress() {
       /*case 5:
         showUpdateFW();
         break;*/
-      case 5:
-        showSyncNTP();
-        break;
       default:
         break;
       }
@@ -248,9 +252,6 @@ void Watchy::handleButtonPress() {
           /*case 5:
             showUpdateFW();
             break;*/
-          case 5:
-            showSyncNTP();
-            break;
           default:
             break;
           }
@@ -303,8 +304,7 @@ void Watchy::showMenu(byte menuIndex, bool partialRefresh) {
 
   const char *menuItems[] = {
       "About Watchy", "Vibrate Motor", "Show Accelerometer",
-      "Set Time",     "Setup WiFi",    /*"Update Firmware",*/
-      "Sync NTP"};
+      "Set Time",     "Setup WiFi" /*, "Update Firmware"*/};
   for (int i = 0; i < MENU_LENGTH; i++) {
     yPos = MENU_HEIGHT + (MENU_HEIGHT * i);
     display.setCursor(0, yPos);
@@ -336,8 +336,7 @@ void Watchy::showFastMenu(byte menuIndex) {
 
   const char *menuItems[] = {
       "About Watchy", "Vibrate Motor", "Show Accelerometer",
-      "Set Time",     "Setup WiFi",    /*"Update Firmware",*/
-      "Sync NTP"};
+      "Set Time",     "Setup WiFi" /*, "Update Firmware"*/};
   for (int i = 0; i < MENU_LENGTH; i++) {
     yPos = MENU_HEIGHT + (MENU_HEIGHT * i);
     display.setCursor(0, yPos);
@@ -428,10 +427,184 @@ void Watchy::vibMotor(uint8_t intervalMs, uint8_t length) {
   }
 }
 
+// Blocks until a button is pressed. Returns its pin, or -1 after timeoutMs.
+static int waitButton(unsigned long timeoutMs) {
+  unsigned long start = millis();
+  while (millis() - start < timeoutMs) {
+    if (digitalRead(MENU_BTN_PIN) == ACTIVE_LOW) {
+      return MENU_BTN_PIN;
+    }
+    if (digitalRead(BACK_BTN_PIN) == ACTIVE_LOW) {
+      return BACK_BTN_PIN;
+    }
+    if (digitalRead(UP_BTN_PIN) == ACTIVE_LOW) {
+      return UP_BTN_PIN;
+    }
+    if (digitalRead(DOWN_BTN_PIN) == ACTIVE_LOW) {
+      return DOWN_BTN_PIN;
+    }
+    delay(10);
+  }
+  return -1;
+}
+
+static void waitButtonsReleased() {
+  unsigned long start = millis();
+  while (millis() - start < 2000 &&
+         (digitalRead(MENU_BTN_PIN) == ACTIVE_LOW ||
+          digitalRead(BACK_BTN_PIN) == ACTIVE_LOW ||
+          digitalRead(UP_BTN_PIN) == ACTIVE_LOW ||
+          digitalRead(DOWN_BTN_PIN) == ACTIVE_LOW)) {
+    delay(20);
+  }
+}
+
+static bool setTimeRowEnabled(int8_t row) {
+  switch (row) {
+  case SETTIME_SYNC:
+    return useNTP;
+  case SETTIME_TIME:
+  case SETTIME_DATE:
+    return !useNTP;
+  default:
+    return true;
+  }
+}
+
+void Watchy::_drawListRow(int8_t row, const char *text, bool selected,
+                          bool enabled) {
+  int16_t x1, y1;
+  uint16_t w, h;
+  int16_t yPos = MENU_HEIGHT + (MENU_HEIGHT * row);
+  display.setCursor(0, yPos);
+  if (selected) {
+    display.getTextBounds(text, 0, yPos, &x1, &y1, &w, &h);
+    display.fillRect(x1 - 1, y1 - 10, 200, h + 15, GxEPD_WHITE);
+    display.setTextColor(GxEPD_BLACK);
+  } else {
+    display.setTextColor(GxEPD_WHITE);
+  }
+  display.print(text);
+  if (!enabled) { // strike through disabled rows
+    display.drawFastHLine(0, yPos - 5, strlen(text) * 11, GxEPD_WHITE);
+  }
+}
+
+void Watchy::_drawSetTimeList(int8_t row, const char *status) {
+  char line[32];
+  display.setFullWindow();
+  display.fillScreen(GxEPD_BLACK);
+  display.setFont(&FreeMonoBold9pt7b);
+  for (int8_t i = 0; i < SETTIME_ROWS; i++) {
+    switch (i) {
+    case SETTIME_NTP:
+      snprintf(line, sizeof(line), "%s Use NTP", useNTP ? "[x]" : "[ ]");
+      break;
+    case SETTIME_SYNC:
+      snprintf(line, sizeof(line), "Sync");
+      break;
+    case SETTIME_ZONE:
+      if (tzCitySel >= 0) {
+        tzLabel(line, sizeof(line), tzEffectiveHours(tzCitySel, tzDstOn),
+                tzCitySel);
+      } else { // zone never picked: settings.gmtOffset is in effect
+        snprintf(line, sizeof(line), "%+03d custom", (int)(gmtOffset / 3600));
+      }
+      break;
+    case SETTIME_TIME:
+      snprintf(line, sizeof(line), "Time %02d:%02d", currentTime.Hour,
+               currentTime.Minute);
+      break;
+    default:
+      snprintf(line, sizeof(line), "Date %04d/%02d/%02d",
+               tmYearToCalendar(currentTime.Year), currentTime.Month,
+               currentTime.Day);
+      break;
+    }
+    _drawListRow(i, line, i == row, setTimeRowEnabled(i));
+  }
+  if (status) {
+    display.setTextColor(GxEPD_WHITE);
+    display.setCursor(0, 190);
+    display.print(status);
+  }
+  display.display(true); // partial refresh
+}
+
+// Set Time list: Up/Down move, Menu toggles or enters a subview, Back leaves.
 void Watchy::setTime() {
 
   guiState = APP_STATE;
 
+  pinMode(DOWN_BTN_PIN, INPUT);
+  pinMode(UP_BTN_PIN, INPUT);
+  pinMode(MENU_BTN_PIN, INPUT);
+  pinMode(BACK_BTN_PIN, INPUT);
+
+  int8_t row         = SETTIME_NTP;
+  const char *status = nullptr;
+
+  waitButtonsReleased();
+
+  while (1) {
+    RTC.read(currentTime);
+    _drawSetTimeList(row, status);
+    status = nullptr;
+
+    int button = waitButton(60000);
+    if (button < 0 || button == BACK_BTN_PIN) {
+      break;
+    }
+
+    if (button == DOWN_BTN_PIN || button == UP_BTN_PIN) {
+      int8_t step = (button == DOWN_BTN_PIN) ? 1 : SETTIME_ROWS - 1;
+      do {
+        row = (row + step) % SETTIME_ROWS;
+      } while (!setTimeRowEnabled(row));
+      continue;
+    }
+
+    // Menu button
+    waitButtonsReleased();
+    bool doSync = false;
+    switch (row) {
+    case SETTIME_NTP:
+      useNTP = !useNTP;
+      doSync = useNTP;
+      break;
+    case SETTIME_SYNC:
+      doSync = true;
+      break;
+    case SETTIME_ZONE:
+      _pickTimezone();
+      break;
+    case SETTIME_TIME:
+      _editDateTime(false);
+      break;
+    case SETTIME_DATE:
+      _editDateTime(true);
+      break;
+    }
+    if (doSync) {
+      _drawSetTimeList(row, "Syncing...");
+      if (_ntpSyncNow()) {
+        status = "NTP synced";
+      } else {
+        useNTP = false;
+        row    = SETTIME_NTP; // Sync row is disabled now
+        status = "Sync failed";
+      }
+    }
+    waitButtonsReleased();
+  }
+
+  showMenu(menuIndex, false);
+}
+
+// Time (hour, minute) or date (year, month, day) editor. Up/Down change the
+// field, Menu advances (and commits after the last field), Back steps back
+// (and cancels from the first field).
+void Watchy::_editDateTime(bool editDate) {
   RTC.read(currentTime);
 
   #ifdef ARDUINO_ESP32S3_DEV
@@ -439,7 +612,7 @@ void Watchy::setTime() {
   uint8_t hour   = currentTime.Hour;
   uint8_t day    = currentTime.Day;
   uint8_t month  = currentTime.Month;
-  uint8_t year   = currentTime.Year;  
+  uint8_t year   = currentTime.Year;
   #else
   int8_t minute = currentTime.Minute;
   int8_t hour   = currentTime.Hour;
@@ -448,29 +621,31 @@ void Watchy::setTime() {
   int8_t year   = tmYearToY2k(currentTime.Year);
   #endif
 
-  int8_t setIndex = SET_HOUR;
-
-  int8_t blink = 0;
-
-  pinMode(DOWN_BTN_PIN, INPUT);
-  pinMode(UP_BTN_PIN, INPUT);
-  pinMode(MENU_BTN_PIN, INPUT);
-  pinMode(BACK_BTN_PIN, INPUT);
+  const int8_t first = editDate ? SET_YEAR : SET_HOUR;
+  const int8_t last  = editDate ? SET_DAY : SET_MINUTE;
+  int8_t setIndex    = first;
+  int8_t blink       = 0;
+  bool commit        = true;
 
   display.setFullWindow();
+  waitButtonsReleased();
 
   while (1) {
 
     if (digitalRead(MENU_BTN_PIN) == ACTIVE_LOW) {
       setIndex++;
-      if (setIndex > SET_DAY) {
+      waitButtonsReleased();
+      if (setIndex > last) {
         break;
       }
     }
     if (digitalRead(BACK_BTN_PIN) == ACTIVE_LOW) {
-      if (setIndex != SET_HOUR) {
-        setIndex--;
+      if (setIndex == first) {
+        commit = false;
+        break;
       }
+      setIndex--;
+      waitButtonsReleased();
     }
 
     blink = 1 - blink;
@@ -523,77 +698,181 @@ void Watchy::setTime() {
 
     display.fillScreen(GxEPD_BLACK);
     display.setTextColor(GxEPD_WHITE);
-    display.setFont(&DSEG7_Classic_Bold_53);
 
-    display.setCursor(5, 80);
-    if (setIndex == SET_HOUR) { // blink hour digits
-      display.setTextColor(blink ? GxEPD_WHITE : GxEPD_BLACK);
-    }
-    if (hour < 10) {
-      display.print("0");
-    }
-    display.print(hour);
+    if (!editDate) {
+      display.setFont(&DSEG7_Classic_Bold_53);
 
-    display.setTextColor(GxEPD_WHITE);
-    display.print(":");
+      display.setCursor(5, 80);
+      if (setIndex == SET_HOUR) { // blink hour digits
+        display.setTextColor(blink ? GxEPD_WHITE : GxEPD_BLACK);
+      }
+      if (hour < 10) {
+        display.print("0");
+      }
+      display.print(hour);
 
-    display.setCursor(108, 80);
-    if (setIndex == SET_MINUTE) { // blink minute digits
-      display.setTextColor(blink ? GxEPD_WHITE : GxEPD_BLACK);
-    }
-    if (minute < 10) {
-      display.print("0");
-    }
-    display.print(minute);
+      display.setTextColor(GxEPD_WHITE);
+      display.print(":");
 
-    display.setTextColor(GxEPD_WHITE);
+      display.setCursor(108, 80);
+      if (setIndex == SET_MINUTE) { // blink minute digits
+        display.setTextColor(blink ? GxEPD_WHITE : GxEPD_BLACK);
+      }
+      if (minute < 10) {
+        display.print("0");
+      }
+      display.print(minute);
+    } else {
+      display.setFont(&FreeMonoBold9pt7b);
+      display.setCursor(45, 100);
+      if (setIndex == SET_YEAR) { // blink year digits
+        display.setTextColor(blink ? GxEPD_WHITE : GxEPD_BLACK);
+      }
+      display.print(2000 + year);
 
-    display.setFont(&FreeMonoBold9pt7b);
-    display.setCursor(45, 150);
-    if (setIndex == SET_YEAR) { // blink minute digits
-      display.setTextColor(blink ? GxEPD_WHITE : GxEPD_BLACK);
-    }
-    display.print(2000 + year);
+      display.setTextColor(GxEPD_WHITE);
+      display.print("/");
 
-    display.setTextColor(GxEPD_WHITE);
-    display.print("/");
+      if (setIndex == SET_MONTH) { // blink month digits
+        display.setTextColor(blink ? GxEPD_WHITE : GxEPD_BLACK);
+      }
+      if (month < 10) {
+        display.print("0");
+      }
+      display.print(month);
 
-    if (setIndex == SET_MONTH) { // blink minute digits
-      display.setTextColor(blink ? GxEPD_WHITE : GxEPD_BLACK);
-    }
-    if (month < 10) {
-      display.print("0");
-    }
-    display.print(month);
+      display.setTextColor(GxEPD_WHITE);
+      display.print("/");
 
-    display.setTextColor(GxEPD_WHITE);
-    display.print("/");
-
-    if (setIndex == SET_DAY) { // blink minute digits
-      display.setTextColor(blink ? GxEPD_WHITE : GxEPD_BLACK);
+      if (setIndex == SET_DAY) { // blink day digits
+        display.setTextColor(blink ? GxEPD_WHITE : GxEPD_BLACK);
+      }
+      if (day < 10) {
+        display.print("0");
+      }
+      display.print(day);
     }
-    if (day < 10) {
-      display.print("0");
-    }
-    display.print(day);
     display.display(true); // partial refresh
   }
 
-  tmElements_t tm;
-  tm.Month  = month;
-  tm.Day    = day;
-  #ifdef ARDUINO_ESP32S3_DEV
-  tm.Year   = year;
-  #else
-  tm.Year   = y2kYearToTm(year);
-  #endif
-  tm.Hour   = hour;
-  tm.Minute = minute;
-  tm.Second = 0;
+  if (commit) {
+    tmElements_t tm;
+    RTC.read(tm); // keep the fields this editor does not touch
+    if (editDate) {
+      tm.Month = month;
+      tm.Day   = day;
+      #ifdef ARDUINO_ESP32S3_DEV
+      tm.Year  = year;
+      #else
+      tm.Year  = y2kYearToTm(year);
+      #endif
+    } else {
+      tm.Hour   = hour;
+      tm.Minute = minute;
+      tm.Second = 0;
+    }
+    RTC.set(tm);
+  }
+  waitButtonsReleased();
+}
 
-  RTC.set(tm);
+// Timezone list: the 24 slots for today's season (see WatchyTimezone.h).
+void Watchy::_pickTimezone() {
+  RTC.read(currentTime);
+  uint8_t window = tzWindow(tmYearToCalendar(currentTime.Year),
+                            currentTime.Month, currentTime.Day);
+  int8_t hours = (tzCitySel >= 0) ? tzEffectiveHours(tzCitySel, tzDstOn)
+                                  : (int8_t)(gmtOffset / 3600);
+  int8_t sel           = constrain(hours - TZ_SLOT_MIN, 0, TZ_SLOTS - 1);
+  const int8_t visible = 7;
+  int8_t top           = constrain(sel - 3, 0, TZ_SLOTS - visible);
+  char line[32];
 
-  showMenu(menuIndex, false);
+  waitButtonsReleased();
+
+  while (1) {
+    display.setFullWindow();
+    display.fillScreen(GxEPD_BLACK);
+    display.setFont(&FreeMonoBold9pt7b);
+    for (int8_t i = 0; i < visible; i++) {
+      int8_t slot = top + i;
+      tzLabel(line, sizeof(line), slot + TZ_SLOT_MIN,
+              tzTableCity(window, slot));
+      _drawListRow(i, line, slot == sel, true);
+    }
+    display.display(true); // partial refresh
+
+    int button = waitButton(60000);
+    if (button < 0 || button == BACK_BTN_PIN) {
+      break; // cancel
+    }
+    if (button == MENU_BTN_PIN) {
+      _applyTimezone(tzTableCity(window, sel));
+      break;
+    }
+    sel = (button == DOWN_BTN_PIN) ? (sel + 1) % TZ_SLOTS
+                                   : (sel + TZ_SLOTS - 1) % TZ_SLOTS;
+    if (sel < top) {
+      top = sel;
+    } else if (sel >= top + visible) {
+      top = sel - visible + 1;
+    }
+  }
+
+  waitButtonsReleased();
+}
+
+// The RTC holds local time, so a zone change moves the RTC by the delta.
+void Watchy::_applyTimezone(uint8_t city) {
+  RTC.read(currentTime);
+  bool dstOn = tzDstActive(tzCityInfo(city).rule,
+                           tmYearToCalendar(currentTime.Year),
+                           currentTime.Month, currentTime.Day);
+  int32_t newOffset = tzOffsetSecs(city, dstOn);
+  if (newOffset != gmtOffset) {
+    _shiftRTC(newOffset - gmtOffset);
+  }
+  tzCitySel = city;
+  tzDstOn   = dstOn;
+  gmtOffset = newOffset;
+}
+
+bool Watchy::_ntpSyncNow() {
+  bool ok = false;
+  if (connectWiFi()) {
+    ok = syncNTP();
+    WiFi.mode(WIFI_OFF);
+    btStop();
+  }
+  return ok;
+}
+
+void Watchy::_shiftRTC(int32_t secs) {
+  RTC.read(currentTime);
+  breakTime((time_t)(makeTime(currentTime) + secs), currentTime);
+  RTC.set(currentTime);
+}
+
+// Called on the minute tick: move the RTC by an hour when the picked city's
+// DST rule flips. Flips at 03:00 local on the transition day; the hour guard
+// keeps the repeated hour after a fall-back from flipping again.
+void Watchy::_dstTick() {
+  if (tzCitySel < 0) {
+    return;
+  }
+  RTC.read(currentTime);
+  if (currentTime.Hour < 3) {
+    return;
+  }
+  bool want = tzDstActive(tzCityInfo(tzCitySel).rule,
+                          tmYearToCalendar(currentTime.Year),
+                          currentTime.Month, currentTime.Day);
+  if (want == tzDstOn) {
+    return;
+  }
+  _shiftRTC(want ? 3600 : -3600);
+  tzDstOn   = want;
+  gmtOffset = tzOffsetSecs(tzCitySel, want);
 }
 
 void Watchy::showAccelerometer() {
@@ -734,8 +1013,12 @@ weatherData Watchy::_getWeatherData(String cityID, String lat, String lon, Strin
 		        breakTime((time_t)(int)responseObject["sys"]["sunrise"], currentWeather.sunrise);
 		        breakTime((time_t)(int)responseObject["sys"]["sunset"], currentWeather.sunset);
         // sync NTP during weather API call and use timezone of lat & lon
-        gmtOffset = int(responseObject["timezone"]);
-        syncNTP(gmtOffset);
+        if (tzCitySel < 0) {
+          gmtOffset = int(responseObject["timezone"]);
+          syncNTP(gmtOffset);
+        } else if (useNTP) { // zone picked in Set Time wins over the API's
+          syncNTP(gmtOffset);
+        }
       } else {
         // http error
       }

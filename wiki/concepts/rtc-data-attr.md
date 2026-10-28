@@ -9,7 +9,7 @@ The persistent variables are declared as externs in `src/Watchy.h` and defined w
 - `sensor` — the **BMA423 accelerometer object**. Storing the driver object itself in RTC memory is significant ([BMA423 Accelerometer](../components/bma423-accelerometer.md)): it means the sensor's configured state survives sleep, so `_bmaConfig()` only runs on a reset wake rather than on every tick.
 - `WIFI_CONFIGURED`, `BLE_CONFIGURED` — connection flags.
 - `USB_PLUGGED_IN` — persists the USB-detect state read at wake.
-- `currentWeather`, `weatherIntervalCounter`, `gmtOffset` — weather cache and refresh rate-limit state ([WiFi & NTP](../components/wifi-ntp.md)); `weatherIntervalCounter` is initialized to `-1` to force a first fetch, and `gmtOffset` carries the timezone learned from a weather call.
+- `currentWeather`, `weatherIntervalCounter`, `gmtOffset` — weather cache and refresh rate-limit state ([WiFi & NTP](../components/wifi-ntp.md)); `weatherIntervalCounter` is initialized to `-1` to force a first fetch, and `gmtOffset` carries the timezone learned from a weather call or derived from the city picked in Set Time. Three more fields — `tzCitySel` (picked city index, -1 = none), `tzDstOn` (that city's DST rule is applied to the RTC) and `useNTP` — are reset in the `init()` reset branch with `gmtOffset`; see the [Set Time + NTP integration plan](../syntheses/set-time-ntp-integration-plan.md).
 - `alreadyInMenu` — used to make the menu auto-return to the watchface after one tick; initialized `true`.
 - `bootTime`, `lastIPAddress`, `lastSSID` — boot timestamp and the last known WiFi identity.
 

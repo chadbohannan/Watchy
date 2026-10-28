@@ -5,6 +5,7 @@
 #include <WiFiManager.h>
 #include <HTTPClient.h>
 #include <NTPClient.h>
+#include "WatchyTimezone.h"
 #include <WiFiUdp.h>
 #include <Arduino_JSON.h>
 #include <GxEPD2_BW.h>
@@ -104,6 +105,14 @@ public:
 
 private:
   void _bmaConfig();
+  void _drawListRow(int8_t row, const char *text, bool selected, bool enabled);
+  void _drawSetTimeList(int8_t row, const char *status);
+  void _editDateTime(bool editDate);
+  void _pickTimezone();
+  void _applyTimezone(uint8_t city);
+  bool _ntpSyncNow();
+  void _shiftRTC(int32_t secs);
+  void _dstTick();
   static void _configModeCallback(WiFiManager *myWiFiManager);
   static uint16_t _readRegister(uint8_t address, uint8_t reg, uint8_t *data,
                                 uint16_t len);

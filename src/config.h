@@ -100,13 +100,20 @@
 #define APP_STATE       1
 #define FW_UPDATE_STATE 2
 #define MENU_HEIGHT     25
-#define MENU_LENGTH     6
+#define MENU_LENGTH     5
 // set time
 #define SET_HOUR   0
 #define SET_MINUTE 1
 #define SET_YEAR   2
 #define SET_MONTH  3
 #define SET_DAY    4
+// set time list rows
+#define SETTIME_NTP  0
+#define SETTIME_SYNC 1
+#define SETTIME_ZONE 2
+#define SETTIME_TIME 3
+#define SETTIME_DATE 4
+#define SETTIME_ROWS 5
 #define HOUR_12_24 24
 // BLE OTA
 #define BLE_DEVICE_NAME        "Watchy BLE OTA"
